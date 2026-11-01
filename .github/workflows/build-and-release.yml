@@ -1,0 +1,119 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract_version.outputs.version }}
+      tag: ${{ steps.extract_version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Автопоиск версии из package.json
+        id: extract_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Найденная версия: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+  build-windows:
+    needs: resolve-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Установка Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Кэширование Rust зависимостей
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Установка npm зависимостей
+        run: npm install
+
+      - name: Запуск интеграционных тестов
+        run: node --experimental-strip-types scripts/test-runner.mjs
+
+      - name: Сборка Tauri v2 (Production & NSIS)
+        run: npm run tauri:build
+
+      - name: Подготовка артефактов
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          VER="${{ needs.resolve-version.outputs.version }}"
+          cp src-tauri/target/release/bundle/nsis/*.exe "artifacts/NanoDiff-Tauri-Setup-v${VER}.exe"
+          cp src-tauri/target/release/nanodiff.exe "artifacts/NanoDiff-Tauri-v${VER}.exe"
+
+      - name: Загрузка сборочных артефактов
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish-release:
+    needs: [resolve-version, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачивание артефактов Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: release-files
+
+      - name: Генерация контрольных сумм SHA256
+        run: |
+          cd release-files
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Подготовка release notes
+        run: |
+          TAG="${{ needs.resolve-version.outputs.tag }}"
+          cat << 'EOF' > release_notes.md
+          ## 🚀 NanoDiff ${{ needs.resolve-version.outputs.tag }}
+
+          Автоматическая сборка релиза через GitHub Actions (Tauri v2 + Rust).
+
+          ### 📦 Загрузки:
+          - **NanoDiff-Tauri-Setup-v${{ needs.resolve-version.outputs.version }}.exe** — полный автономный NSIS установщик (~1.35 МБ).
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}.exe** — портативная версия без установки (~4 МБ).
+          - **checksums.txt** — SHA256 контрольные суммы файлов.
+
+          ### 💎 Особенности сборки:
+          - Нативный WebView2 рантайм (память < 35 МБ RAM).
+          - Рекурсивный In-Memory VFS для любых вложенных архивов.
+          - Myers Diff + 54 языка подсветки синтаксиса.
+          EOF
+
+      - name: Публикация релиза на GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: "NanoDiff ${{ needs.resolve-version.outputs.tag }}"
+          files: release-files/*
+          body_path: release_notes.md
+          prerelease: false

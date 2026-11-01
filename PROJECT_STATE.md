@@ -22,3 +22,4 @@
 - [x] Успешная компиляция релиза `tauri build`.
 - [x] Создан компактный установщик `NanoDiff-Tauri-Setup-1.0.0.exe` (1.35 МБ) на Рабочем столе.
 - [x] Создан портативный exe `NanoDiff-Tauri-v1.0.0.exe` (4.05 МБ) на Рабочем столе.
+- [x] Настроен автоматический CI/CD GitHub Actions (`build-and-release.yml`) с автоопределением версии из `package.json`.
