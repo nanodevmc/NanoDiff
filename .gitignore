@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-electron/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+*.log
+*.exe
+*.zip
+*.tar.gz
+*.blockmap
+.vscode/
+.idea/
+Thumbs.db
