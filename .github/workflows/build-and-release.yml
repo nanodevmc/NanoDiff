@@ -51,29 +51,90 @@ jobs:
       - name: Установка npm зависимостей
         run: npm install
 
+      - name: Сборка веб-бандла
+        run: npm run build
+
       - name: Запуск интеграционных тестов
         run: node --experimental-strip-types scripts/test-runner.mjs
 
-      - name: Сборка Tauri v2 (Production & NSIS)
+      - name: Сборка Tauri v2 (Windows NSIS & Portable)
         run: npm run tauri:build
 
-      - name: Подготовка артефактов
+      - name: Подготовка артефактов Windows
         shell: bash
         run: |
           mkdir -p artifacts
           VER="${{ needs.resolve-version.outputs.version }}"
-          cp src-tauri/target/release/bundle/nsis/*.exe "artifacts/NanoDiff-Tauri-Setup-v${VER}.exe"
-          cp src-tauri/target/release/nanodiff.exe "artifacts/NanoDiff-Tauri-v${VER}.exe"
+          cp src-tauri/target/release/bundle/nsis/*.exe "artifacts/NanoDiff-Tauri-v${VER}-Windows-Setup.exe"
+          cp src-tauri/target/release/nanodiff.exe "artifacts/NanoDiff-Tauri-v${VER}-Windows-Portable.exe"
 
-      - name: Загрузка сборочных артефактов
+      - name: Загрузка сборочных артефактов Windows
         uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
           path: artifacts/*
           if-no-files-found: error
 
+  build-linux:
+    needs: resolve-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка системных библиотек Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libglib2.0-dev
+
+      - name: Установка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Установка Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Кэширование Rust зависимостей
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Установка npm зависимостей
+        run: npm install
+
+      - name: Сборка веб-бандла
+        run: npm run build
+
+      - name: Запуск интеграционных тестов
+        run: node --experimental-strip-types scripts/test-runner.mjs
+
+      - name: Сборка Tauri v2 (Linux AppImage / Deb / Binary)
+        run: npm run tauri:build
+
+      - name: Подготовка артефактов Linux
+        run: |
+          mkdir -p artifacts
+          VER="${{ needs.resolve-version.outputs.version }}"
+          cp src-tauri/target/release/nanodiff "artifacts/NanoDiff-Tauri-v${VER}-Linux-x64"
+          chmod +x "artifacts/NanoDiff-Tauri-v${VER}-Linux-x64"
+          
+          if compgen -G "src-tauri/target/release/bundle/appimage/*.AppImage" > /dev/null; then
+            cp src-tauri/target/release/bundle/appimage/*.AppImage "artifacts/NanoDiff-Tauri-v${VER}-Linux-x64.AppImage"
+          fi
+          
+          if compgen -G "src-tauri/target/release/bundle/deb/*.deb" > /dev/null; then
+            cp src-tauri/target/release/bundle/deb/*.deb "artifacts/NanoDiff-Tauri-v${VER}-Linux-x64.deb"
+          fi
+
+      - name: Загрузка сборочных артефактов Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: artifacts/*
+          if-no-files-found: error
+
   publish-release:
-    needs: [resolve-version, build-windows]
+    needs: [resolve-version, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +143,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-binaries
+          path: release-files
+
+      - name: Скачивание артефактов Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
           path: release-files
 
       - name: Генерация контрольных сумм SHA256
@@ -96,17 +163,19 @@ jobs:
           cat << 'EOF' > release_notes.md
           ## 🚀 NanoDiff ${{ needs.resolve-version.outputs.tag }}
 
-          Автоматическая сборка релиза через GitHub Actions (Tauri v2 + Rust).
+          Автоматическая кроссплатформенная сборка (Windows + Linux) через GitHub Actions.
 
-          ### 📦 Загрузки:
-          - **NanoDiff-Tauri-Setup-v${{ needs.resolve-version.outputs.version }}.exe** — полный автономный NSIS установщик (~1.35 МБ).
-          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}.exe** — портативная версия без установки (~4 МБ).
-          - **checksums.txt** — SHA256 контрольные суммы файлов.
+          ### 📦 Загрузки для Windows:
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}-Windows-Setup.exe** — автономный NSIS установщик (~1.35 МБ).
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}-Windows-Portable.exe** — портативная версия без установки (~4 МБ).
 
-          ### 💎 Особенности сборки:
-          - Нативный WebView2 рантайм (память < 35 МБ RAM).
-          - Рекурсивный In-Memory VFS для любых вложенных архивов.
-          - Myers Diff + 54 языка подсветки синтаксиса.
+          ### 🐧 Загрузки для Linux:
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}-Linux-x64.AppImage** — портативный AppImage для любых дистрибутивов.
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}-Linux-x64.deb** — пакет для Debian / Ubuntu / Mint.
+          - **NanoDiff-Tauri-v${{ needs.resolve-version.outputs.version }}-Linux-x64** — нативный бинарник без обёртки.
+
+          ### 🔒 Проверка целостности:
+          - **checksums.txt** — SHA256 контрольные суммы всех бинарников.
           EOF
 
       - name: Публикация релиза на GitHub

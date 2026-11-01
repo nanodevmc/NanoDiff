@@ -205,6 +205,11 @@ async function runTestSuite() {
   const path = await import('node:path');
 
   const distDir = path.resolve(process.cwd(), 'dist');
+  if (!fs.existsSync(distDir)) {
+    console.log(' -> Папка dist/ не найдена, компилируем production бандл...');
+    const { execSync } = await import('node:child_process');
+    execSync('npm run build', { stdio: 'inherit' });
+  }
   assert.ok(fs.existsSync(distDir), 'Папка dist/ должна существовать');
 
   const htmlPath = path.join(distDir, 'index.html');
